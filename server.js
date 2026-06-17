@@ -59,19 +59,10 @@ async function fetchCatalogProducts() {
       products(first: 50, query: "status:active"${afterClause}) {
         edges {
           node {
-            id
             handle
             title
             metafield(namespace: "custom", key: "meta_catalog_image") {
               value
-            }
-            variants(first: 20) {
-              edges {
-                node {
-                  id
-                  availableForSale
-                }
-              }
             }
           }
           cursor
@@ -92,10 +83,6 @@ async function fetchCatalogProducts() {
           handle: node.handle,
           title: node.title,
           imageUrl: node.metafield.value,
-          variants: node.variants.edges.map(e => ({
-            id: e.node.id.replace('gid://shopify/ProductVariant/', ''),
-            available: e.node.availableForSale,
-          })),
         });
       }
     }
@@ -108,15 +95,13 @@ function generateXML(products) {
   const items = [];
 
   for (const product of products) {
-    for (const variant of product.variants) {
-      items.push(`    <item>
-      <g:id>${variant.id}</g:id>
+    items.push(`    <item>
+      <g:id>${product.handle}</g:id>
       <g:title><![CDATA[${product.title}]]></g:title>
       <g:link><![CDATA[https://parabellumstore.com.br/products/${product.handle}]]></g:link>
-      <g:availability>${variant.available ? 'in stock' : 'out of stock'}</g:availability>
+      <g:availability>in stock</g:availability>
       <g:image_link><![CDATA[${product.imageUrl}]]></g:image_link>
     </item>`);
-    }
   }
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -139,8 +124,7 @@ async function getCachedXML() {
   const products = await fetchCatalogProducts();
   _cache = generateXML(products);
   _cacheAt = Date.now();
-  const totalVariants = products.reduce((a, p) => a + p.variants.length, 0);
-  console.log(`[${new Date().toISOString()}] Cache atualizado — ${products.length} produtos, ${totalVariants} variantes`);
+  console.log(`[${new Date().toISOString()}] Cache atualizado — ${products.length} produtos no feed`);
   return _cache;
 }
 
