@@ -61,6 +61,7 @@ async function fetchCatalogProducts() {
           node {
             id
             handle
+            title
             metafield(namespace: "custom", key: "meta_catalog_image") {
               value
             }
@@ -68,6 +69,7 @@ async function fetchCatalogProducts() {
               edges {
                 node {
                   id
+                  availableForSale
                 }
               }
             }
@@ -88,10 +90,12 @@ async function fetchCatalogProducts() {
       if (node.metafield?.value) {
         products.push({
           handle: node.handle,
+          title: node.title,
           imageUrl: node.metafield.value,
-          variantIds: node.variants.edges.map(e =>
-            e.node.id.replace('gid://shopify/ProductVariant/', '')
-          ),
+          variants: node.variants.edges.map(e => ({
+            id: e.node.id.replace('gid://shopify/ProductVariant/', ''),
+            available: e.node.availableForSale,
+          })),
         });
       }
     }
@@ -104,9 +108,12 @@ function generateXML(products) {
   const items = [];
 
   for (const product of products) {
-    for (const variantId of product.variantIds) {
+    for (const variant of product.variants) {
       items.push(`    <item>
-      <g:id>${variantId}</g:id>
+      <g:id>${variant.id}</g:id>
+      <g:title><![CDATA[${product.title}]]></g:title>
+      <g:link><![CDATA[https://parabellumstore.com.br/products/${product.handle}]]></g:link>
+      <g:availability>${variant.available ? 'in stock' : 'out of stock'}</g:availability>
       <g:image_link><![CDATA[${product.imageUrl}]]></g:image_link>
     </item>`);
     }
@@ -132,7 +139,7 @@ async function getCachedXML() {
   const products = await fetchCatalogProducts();
   _cache = generateXML(products);
   _cacheAt = Date.now();
-  const totalVariants = products.reduce((a, p) => a + p.variantIds.length, 0);
+  const totalVariants = products.reduce((a, p) => a + p.variants.length, 0);
   console.log(`[${new Date().toISOString()}] Cache atualizado — ${products.length} produtos, ${totalVariants} variantes`);
   return _cache;
 }
