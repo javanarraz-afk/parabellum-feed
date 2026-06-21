@@ -48,6 +48,12 @@ async function shopifyGQL(query) {
   return r.data.data;
 }
 
+function getMetaCatalogImage(product) {
+  const images = product.images?.edges?.map(e => e.node) || [];
+  const meta = images.find(img => img.altText === 'meta-catalog');
+  return meta ? meta.url : null;
+}
+
 async function fetchCatalogProducts() {
   const products = [];
   let cursor = null;
@@ -60,9 +66,20 @@ async function fetchCatalogProducts() {
         edges {
           node {
             handle
-            title
-            metafield(namespace: "custom", key: "meta_catalog_image") {
-              value
+            images(first: 10) {
+              edges {
+                node {
+                  url
+                  altText
+                }
+              }
+            }
+            variants(first: 100) {
+              edges {
+                node {
+                  id
+                }
+              }
             }
           }
           cursor
@@ -78,11 +95,15 @@ async function fetchCatalogProducts() {
     if (edges.length > 0) cursor = edges[edges.length - 1].cursor;
 
     for (const { node } of edges) {
-      if (node.metafield?.value) {
+      const imageUrl = getMetaCatalogImage(node);
+      if (imageUrl) {
         products.push({
-          handle: node.handle,
-          title: node.title,
-          imageUrl: node.metafield.value,
+          imageUrl,
+          // retailer_id no Meta = ID de variante cru da Shopify (sem prefixo).
+          // Emitimos uma linha por variante para casar 1-a-1 com os itens da Shopify.
+          variantIds: node.variants.edges.map(
+            e => e.node.id.replace('gid://shopify/ProductVariant/', '')
+          ),
         });
       }
     }
@@ -91,17 +112,19 @@ async function fetchCatalogProducts() {
   return products;
 }
 
+// Feed de OVERRIDE: só sobrescreve image_link dos itens que já existem no
+// catálogo (vindos da Shopify). Não emite title/price/link — esses ficam da
+// Shopify. Casa por g:id == ID de variante.
 function generateXML(products) {
   const items = [];
 
   for (const product of products) {
-    items.push(`    <item>
-      <g:id>${product.handle}</g:id>
-      <g:title><![CDATA[${product.title}]]></g:title>
-      <g:link><![CDATA[https://parabellumstore.com.br/products/${product.handle}]]></g:link>
-      <g:availability>in stock</g:availability>
+    for (const variantId of product.variantIds) {
+      items.push(`    <item>
+      <g:id>${variantId}</g:id>
       <g:image_link><![CDATA[${product.imageUrl}]]></g:image_link>
     </item>`);
+    }
   }
 
   return `<?xml version="1.0" encoding="UTF-8"?>
@@ -124,7 +147,8 @@ async function getCachedXML() {
   const products = await fetchCatalogProducts();
   _cache = generateXML(products);
   _cacheAt = Date.now();
-  console.log(`[${new Date().toISOString()}] Cache atualizado — ${products.length} produtos no feed`);
+  const totalItems = products.reduce((a, p) => a + p.variantIds.length, 0);
+  console.log(`[${new Date().toISOString()}] Cache atualizado — ${products.length} produtos, ${totalItems} variantes (override de imagem)`);
   return _cache;
 }
 
