@@ -54,6 +54,14 @@ function getMetaCatalogImage(product) {
   return meta ? meta.url : null;
 }
 
+function esc(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
 async function fetchCatalogProducts() {
   const products = [];
   let cursor = null;
@@ -66,6 +74,8 @@ async function fetchCatalogProducts() {
         edges {
           node {
             handle
+            title
+            onlineStoreUrl
             images(first: 10) {
               edges {
                 node {
@@ -78,6 +88,9 @@ async function fetchCatalogProducts() {
               edges {
                 node {
                   id
+                  price
+                  availableForSale
+                  title
                 }
               }
             }
@@ -96,14 +109,20 @@ async function fetchCatalogProducts() {
 
     for (const { node } of edges) {
       const imageUrl = getMetaCatalogImage(node);
-      if (imageUrl) {
+      if (!imageUrl) continue;
+
+      const productUrl = node.onlineStoreUrl ||
+        `https://parabellumstore.com.br/products/${node.handle}`;
+
+      for (const { node: v } of node.variants.edges) {
+        const variantId = v.id.replace('gid://shopify/ProductVariant/', '');
         products.push({
+          id: variantId,
           imageUrl,
-          // retailer_id no Meta = ID de variante cru da Shopify (sem prefixo).
-          // Emitimos uma linha por variante para casar 1-a-1 com os itens da Shopify.
-          variantIds: node.variants.edges.map(
-            e => e.node.id.replace('gid://shopify/ProductVariant/', '')
-          ),
+          price: `${Number(v.price).toFixed(2)} BRL`,
+          availability: v.availableForSale ? 'in stock' : 'out of stock',
+          title: node.title,
+          link: productUrl,
         });
       }
     }
@@ -112,28 +131,23 @@ async function fetchCatalogProducts() {
   return products;
 }
 
-// Feed de OVERRIDE: só sobrescreve image_link dos itens que já existem no
-// catálogo (vindos da Shopify). Não emite title/price/link — esses ficam da
-// Shopify. Casa por g:id == ID de variante.
-function generateXML(products) {
-  const items = [];
-
-  for (const product of products) {
-    for (const variantId of product.variantIds) {
-      items.push(`    <item>
-      <g:id>${variantId}</g:id>
-      <g:image_link><![CDATA[${product.imageUrl}]]></g:image_link>
+function generateXML(items) {
+  const rows = items.map(item => `    <item>
+      <g:id>${item.id}</g:id>
+      <g:image_link><![CDATA[${item.imageUrl}]]></g:image_link>
+      <g:price>${esc(item.price)}</g:price>
+      <g:availability>${item.availability}</g:availability>
+      <title>${esc(item.title)}</title>
+      <link><![CDATA[${item.link}]]></link>
     </item>`);
-    }
-  }
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:g="http://base.google.com/ns/1.0">
   <channel>
-    <title>Parabellum Store — Supplementary Feed</title>
+    <title>Parabellum Store — Meta Catalog Feed</title>
     <link>https://parabellumstore.com.br</link>
-    <description>Image override para Meta Commerce Manager</description>
-${items.join('\n')}
+    <description>Feed de imagens 1:1 para Meta Commerce Manager</description>
+${rows.join('\n')}
   </channel>
 </rss>`;
 }
@@ -144,11 +158,11 @@ const CACHE_TTL = 60 * 60 * 1000; // 1 hora
 
 async function getCachedXML() {
   if (_cache && Date.now() - _cacheAt < CACHE_TTL) return _cache;
-  const products = await fetchCatalogProducts();
-  _cache = generateXML(products);
+  const items = await fetchCatalogProducts();
+  _cache = generateXML(items);
   _cacheAt = Date.now();
-  const totalItems = products.reduce((a, p) => a + p.variantIds.length, 0);
-  console.log(`[${new Date().toISOString()}] Cache atualizado — ${products.length} produtos, ${totalItems} variantes (override de imagem)`);
+  const products = new Set(items.map(i => i.title)).size;
+  console.log(`[${new Date().toISOString()}] Cache atualizado — ${products} produtos, ${items.length} variantes`);
   return _cache;
 }
 
