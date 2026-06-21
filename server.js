@@ -75,6 +75,7 @@ async function fetchCatalogProducts() {
           node {
             handle
             title
+            description(truncateAt: 500)
             onlineStoreUrl
             images(first: 10) {
               edges {
@@ -89,8 +90,6 @@ async function fetchCatalogProducts() {
                 node {
                   id
                   price
-                  availableForSale
-                  title
                 }
               }
             }
@@ -114,17 +113,18 @@ async function fetchCatalogProducts() {
       const productUrl = node.onlineStoreUrl ||
         `https://parabellumstore.com.br/products/${node.handle}`;
 
-      // Preço mínimo entre variantes disponíveis (fallback: primeira variante)
       const variants = node.variants.edges.map(e => e.node);
-      const available = variants.filter(v => v.availableForSale);
-      const refVariant = available.length > 0 ? available[0] : variants[0];
+      const minPrice = variants.reduce((min, v) => {
+        const p = Number(v.price);
+        return p < min ? p : min;
+      }, Number(variants[0]?.price || 0));
 
       products.push({
         id: node.handle,
         imageUrl,
-        price: `${Number(refVariant?.price || 0).toFixed(2)} BRL`,
-        availability: available.length > 0 ? 'in stock' : 'out of stock',
+        price: `${minPrice.toFixed(2)} BRL`,
         title: node.title,
+        description: node.description || node.title,
         link: productUrl,
       });
     }
@@ -136,11 +136,14 @@ async function fetchCatalogProducts() {
 function generateXML(items) {
   const rows = items.map(item => `    <item>
       <g:id>${item.id}</g:id>
+      <title>${esc(item.title)}</title>
+      <description>${esc(item.description)}</description>
+      <link><![CDATA[${item.link}]]></link>
       <g:image_link><![CDATA[${item.imageUrl}]]></g:image_link>
       <g:price>${esc(item.price)}</g:price>
-      <g:availability>${item.availability}</g:availability>
-      <title>${esc(item.title)}</title>
-      <link><![CDATA[${item.link}]]></link>
+      <g:availability>in stock</g:availability>
+      <g:condition>new</g:condition>
+      <g:brand>Parabellum Store</g:brand>
     </item>`);
 
   return `<?xml version="1.0" encoding="UTF-8"?>
