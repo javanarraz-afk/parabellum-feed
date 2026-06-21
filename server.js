@@ -114,17 +114,19 @@ async function fetchCatalogProducts() {
       const productUrl = node.onlineStoreUrl ||
         `https://parabellumstore.com.br/products/${node.handle}`;
 
-      for (const { node: v } of node.variants.edges) {
-        const variantId = v.id.replace('gid://shopify/ProductVariant/', '');
-        products.push({
-          id: variantId,
-          imageUrl,
-          price: `${Number(v.price).toFixed(2)} BRL`,
-          availability: v.availableForSale ? 'in stock' : 'out of stock',
-          title: node.title,
-          link: productUrl,
-        });
-      }
+      // Preço mínimo entre variantes disponíveis (fallback: primeira variante)
+      const variants = node.variants.edges.map(e => e.node);
+      const available = variants.filter(v => v.availableForSale);
+      const refVariant = available.length > 0 ? available[0] : variants[0];
+
+      products.push({
+        id: node.handle,
+        imageUrl,
+        price: `${Number(refVariant?.price || 0).toFixed(2)} BRL`,
+        availability: available.length > 0 ? 'in stock' : 'out of stock',
+        title: node.title,
+        link: productUrl,
+      });
     }
   }
 
@@ -161,8 +163,7 @@ async function getCachedXML() {
   const items = await fetchCatalogProducts();
   _cache = generateXML(items);
   _cacheAt = Date.now();
-  const products = new Set(items.map(i => i.title)).size;
-  console.log(`[${new Date().toISOString()}] Cache atualizado — ${products} produtos, ${items.length} variantes`);
+  console.log(`[${new Date().toISOString()}] Cache atualizado — ${items.length} produtos`);
   return _cache;
 }
 
