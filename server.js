@@ -136,9 +136,9 @@ async function fetchCatalogProducts() {
 function generateXML(items) {
   const rows = items.map(item => `    <item>
       <g:id>${item.id}</g:id>
-      <title>${esc(item.title)}</title>
-      <description>${esc(item.description)}</description>
-      <link><![CDATA[${item.link}]]></link>
+      <g:title>${esc(item.title)}</g:title>
+      <g:description>${esc(item.description)}</g:description>
+      <g:link><![CDATA[${item.link}]]></g:link>
       <g:image_link><![CDATA[${item.imageUrl}]]></g:image_link>
       <g:price>${esc(item.price)}</g:price>
       <g:availability>in stock</g:availability>
