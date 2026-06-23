@@ -131,7 +131,7 @@ async function fetchCatalogProducts() {
           link: productUrl,
           imageUrl,
           price: `${Number(variant.price).toFixed(2)} BRL`,
-          availability: variant.availableForSale ? 'in stock' : 'out of stock',
+          availability: 'in stock',
         });
       }
     }
