@@ -1,150 +1,143 @@
 # Parabellum — Meta Catalog Feed
 
-Feed RSS para Meta Commerce Manager com imagens 1:1 customizadas via Shopify + Google Drive.
+Feed RSS para Meta Commerce Manager com imagens 1:1 customizadas via Shopify.
 
 ---
 
-## Estrutura do projeto
+## Estado atual (22/06/2026)
+
+### O que está funcionando
+- Servidor rodando em `https://parabellum-feed.onrender.com`
+- Feed com **39 produtos / 761 variantes** (produtos que têm imagem com `alt="meta-catalog"` no Shopify)
+- Catálogo **"Parabellum Catalog"** criado no Meta Commerce Manager apontando para o feed
+- Estrutura correta: variante como item, produto como grupo — pixel e catálogo casam
+
+### O que falta
+- **36 produtos ainda sem imagem 1:1** — o upload script precisa rodar para esses produtos (de 75 esperados, 39 já têm imagem)
+- **Sincronização completa do catálogo** — após forçar o re-sync no Commerce Manager, devem aparecer os 39 produtos (hoje mostra 4 porque o Meta buscou o feed antes do Render estar ativo)
+- **Verificar retargeting** — após o catálogo estar completo, confirmar que `content_ids` do pixel bate com os IDs do feed
+
+---
+
+## Por que esse projeto existe
+
+O app oficial Shopify-Meta gerava itens em nível de variante com IDs no formato `shopify_BR_[productID]_[variantID]`. Isso criava múltiplos itens por produto no catálogo, quebrava a lojinha do WhatsApp/Instagram, e as imagens de capa vinham cortadas pelo Meta (o produto é estampa — precisa de imagem 1:1 em close).
+
+**Solução:** feed RSS próprio com imagens 1:1 já hospedadas no CDN da Shopify, estrutura de variantes agrupadas por produto via `g:item_group_id`, e IDs que casam com o que o pixel dispara.
+
+---
+
+## Arquitetura da solução
+
+### Por que não desinstalar o app da Meta
+
+O app da Meta instala um **web pixel sandboxed** — ele não é editável via tema. Esse pixel dispara `content_ids` com o **variant ID numérico** do Shopify (ex: `48786087379200`) e `content_type: product`. Desinstalar o app remove o pixel junto. Conclusão: **manter o app instalado** para preservar o pixel. O problema era só o catálogo, não o pixel.
+
+### Como o feed funciona
 
 ```
-server.js          → servidor do feed RSS (deploy no Render)
-upload/            → scripts para subir imagens no Shopify
-  meta-catalog-upload.js  → script principal de upload
-  auth.js                 → gera Google OAuth refresh token (rodar 1x)
-  fix-drive-names.js      → diagnóstico de nomes errados no Drive
-  .env.example            → template de variáveis de ambiente
+Shopify (produtos ativos com alt="meta-catalog")
+    → server.js (Render)
+    → feed RSS em /feed
+    → Meta Commerce Manager (sincroniza diariamente)
 ```
 
----
+### Estrutura de cada item no feed
 
-## Como funciona
+```xml
+<item>
+  <g:id>48786087379200</g:id>              <!-- variant ID numérico — casa com pixel -->
+  <g:item_group_id>8234567890123</g:item_group_id>  <!-- product ID — agrupa variantes -->
+  <g:title>Nome do Produto</g:title>
+  <g:description>Descrição curta</g:description>
+  <g:link>https://parabellumstore.com.br/products/handle</g:link>
+  <g:image_link>https://cdn.shopify.com/.../imagem-1x1.jpg</g:image_link>
+  <g:price>89.90 BRL</g:price>
+  <g:availability>in stock</g:availability>
+  <g:condition>new</g:condition>
+  <g:brand>Parabellum Store</g:brand>
+</item>
+```
 
-1. Imagens 1:1 são salvas no Google Drive (pasta "Claud Adjust Catalog")
-2. O script `meta-catalog-upload.js` pega cada imagem e sobe para o produto correspondente no Shopify com `alt="meta-catalog"`
-3. O servidor `server.js` lê os produtos do Shopify, filtra imagens com `altText === "meta-catalog"` e gera um feed RSS completo
-4. O feed é cadastrado no Meta Commerce Manager como **única fonte de dados**
+**Por que um item por variante e não por produto:**
+O pixel da Meta dispara o variant ID como `content_ids`. Para retargeting e atribuição funcionarem, o `g:id` do feed precisa casar exatamente. O Meta agrupa as variantes automaticamente pelo `g:item_group_id`, mostrando um único produto na lojinha com a imagem 1:1.
 
----
+### Por que as imagens funcionam assim
 
-## Configurar um catálogo NOVO no Meta (do zero, sem dor de cabeça)
-
-### Regra de ouro
-**NÃO conecte o Shopify como fonte de dados no Meta.** Conectar o Shopify cria itens duplicados (um por variante) e o Meta fica sobrescrevendo os dados do feed. Use SOMENTE o feed RSS abaixo.
-
----
-
-### 1. Deploy do servidor (Render)
-
-O servidor já está em `https://parabellum-feed.onrender.com/feed`
-
-Se precisar de novo deploy:
-1. Fork este repo
-2. Crie conta no [render.com](https://render.com)
-3. New Web Service → conecta o repo → Build Command: `npm install` → Start Command: `node server.js`
-4. Variáveis de ambiente no Render:
-   ```
-   SHOPIFY_STORE=SEU-STORE.myshopify.com
-   SHOPIFY_CLIENT_ID=...
-   SHOPIFY_CLIENT_SECRET=...
-   ```
+1. Imagens 1:1 (close na estampa) foram salvas no Google Drive na pasta "Claud Adjust Catalog"
+2. O script `upload/meta-catalog-upload.js` fez upload dessas imagens para cada produto no Shopify com `altText = "meta-catalog"`
+3. O servidor filtra apenas imagens com esse alt text — todos os produtos sem essa imagem ficam fora do feed (intencional)
 
 ---
 
-### 2. Criar catálogo no Meta Commerce Manager
+## Regra de ouro
 
-1. Acesse [business.facebook.com/commerce](https://business.facebook.com/commerce)
-2. **Criar catálogo** → Tipo: E-commerce
-3. No catálogo criado → **Fontes de dados → + Adicionar → Feed de dados → Usar uma URL**
-4. URL: `https://parabellum-feed.onrender.com/feed`
-5. Frequência: **Diária**
-6. Salvar e aguardar o primeiro sync (~5 minutos)
+**NÃO conecte o Shopify como fonte de dados no Meta Commerce Manager.** Isso cria itens duplicados e o Meta sobrescreve os dados do feed. Use **somente** o feed RSS.
 
-> **NÃO adicione o Shopify como fonte.** O feed já tem todos os campos necessários.
+O app da Meta pode continuar instalado — só não use o catálogo que ele gera.
 
 ---
 
-### 3. Verificar se o feed tem tudo que o Meta precisa
+## Endpoints do servidor
 
-O feed envia por produto:
-- `g:id` → handle do produto (ex: `long-barrel-uh09y`)
-- `g:title` → nome do produto
-- `g:description` → descrição curta (até 500 chars)
-- `g:link` → URL da página do produto
-- `g:image_link` → imagem 1:1 do Drive
-- `g:price` → menor preço das variantes (ex: `299.90 BRL`)
-- `g:availability` → sempre `in stock`
-- `g:condition` → sempre `new`
-- `g:brand` → `Parabellum Store`
-
-Produtos **sem** imagem com `alt="meta-catalog"` no Shopify **não aparecem no feed** — isso é proposital.
+| Endpoint | Descrição |
+|----------|-----------|
+| `GET /feed` | Feed RSS (cache de 1 hora) |
+| `GET /refresh` | Força recarregar o feed do Shopify agora |
+| `GET /debug` | Lista todos os produtos/variantes do feed com IDs — usar para comparar com o pixel |
+| `GET /publications` | Lista canais de venda da Shopify (para identificar canal Facebook) |
+| `GET /` | Status do servidor e idade do cache |
 
 ---
 
-### 4. Subir imagens no Shopify
+## Próximas ações (em ordem)
 
-#### Pré-requisitos
-- Node.js instalado
-- Pasta no Google Drive com imagens nomeadas como `handle-do-produto.png`
-- Credenciais Shopify (Client ID + Secret) de um app privado com permissão `write_products`
-- Credenciais Google OAuth
+### 1. Forçar re-sync do catálogo no Meta
+Commerce Manager → Fontes de dados → clicar na fonte do feed → "Atualizar agora"
+Aguardar ~5 minutos. Devem aparecer 39 produtos agrupados.
 
-#### Setup inicial (uma vez)
+### 2. Completar o upload das imagens restantes
+36 produtos ainda não têm imagem 1:1 (de 75 esperados, 39 já processados).
 
 ```bash
 cd upload/
-cp .env.example .env
-# preencha o .env com suas credenciais
-npm install
-node auth.js   # abre o navegador, autoriza o Google Drive e salva o token no .env
+node meta-catalog-upload.js --dry-run   # ver quais faltam
+node meta-catalog-upload.js             # subir todos que faltam
 ```
 
-#### Nomear os arquivos no Drive
-
-Cada arquivo deve ter o nome exato do handle Shopify + extensão:
-```
-long-barrel-uh09y.png
-geodefense-52798.png
-sun-tzu-aqnok.jpg
-```
-
-Para descobrir o handle de um produto: na Shopify Admin, abra o produto → veja a URL → o handle é o trecho após `/products/`.
-
-#### Subir as imagens
-
-```bash
-# testar sem subir nada
-node meta-catalog-upload.js --dry-run
-
-# subir tudo
-node meta-catalog-upload.js
-
-# subir produto específico
-node meta-catalog-upload.js --handle long-barrel-uh09y
-
-# subir vários produtos
-node meta-catalog-upload.js --handle long-barrel-uh09y geodefense-52798
-```
-
-O script:
-- Remove imagem anterior com `alt="meta-catalog"` (evita duplicatas em re-runs)
-- Faz upload via staged upload para o Shopify
-- A imagem fica como imagem adicional do produto (não substitui a capa)
-
-#### Forçar atualização do feed após uploads
-
+Depois:
 ```
 https://parabellum-feed.onrender.com/refresh
 ```
 
-> Aguarde ~30 segundos após os uploads antes de chamar o /refresh, pois o Shopify processa as imagens de forma assíncrona.
+### 3. Verificar retargeting
+Após o catálogo completo, confirmar que um evento `ViewContent` no site retorna um produto matched no Commerce Manager → Diagnóstico → Correspondência de eventos.
+
+### 4. Configurar lojinha no WhatsApp / Instagram (opcional)
+Commerce Manager → Configurações → Lojas / Canais → adicionar canal WhatsApp Business.
 
 ---
 
-### 5. Conectar o feed a um anúncio / Shop no WhatsApp
+## Como subir imagens para produtos novos
 
-1. No Meta Business Suite → selecione o catálogo criado
-2. Configurações → Lojas / Canais → adicionar canal WhatsApp
-3. Associar ao número de WhatsApp Business desejado
+```bash
+cd upload/
+
+# testar sem subir nada
+node meta-catalog-upload.js --dry-run
+
+# subir tudo que ainda não tem imagem meta-catalog
+node meta-catalog-upload.js
+
+# subir produto específico pelo handle
+node meta-catalog-upload.js --handle nome-do-handle
+
+# forçar atualização do feed após uploads
+# aguardar ~30s depois dos uploads antes de chamar o refresh
+curl https://parabellum-feed.onrender.com/refresh
+```
+
+O handle de um produto está na URL do produto no admin Shopify: `/products/[handle]`.
 
 ---
 
@@ -158,7 +151,7 @@ https://parabellum-feed.onrender.com/refresh
 | `SHOPIFY_CLIENT_ID` | ID do app privado Shopify |
 | `SHOPIFY_CLIENT_SECRET` | Secret do app privado Shopify |
 
-### Script de upload (upload/.env)
+### Script de upload (`upload/.env`)
 
 | Variável | Descrição |
 |----------|-----------|
@@ -167,22 +160,28 @@ https://parabellum-feed.onrender.com/refresh
 | `SHOPIFY_CLIENT_SECRET` | mesmo acima |
 | `GOOGLE_CLIENT_ID` | ID do projeto no Google Cloud |
 | `GOOGLE_CLIENT_SECRET` | Secret do projeto no Google Cloud |
-| `GOOGLE_REFRESH_TOKEN` | Gerado pelo `node auth.js` |
+| `GOOGLE_REFRESH_TOKEN` | Gerado pelo `node auth.js` (rodar 1x) |
 
 ---
 
-## IDs de referência (conta atual)
+## IDs de referência
 
-- **Pasta no Drive:** `1C7isv1A0PwjVNHg3d7EjWhsIJHAaN7UA` (Claud Adjust Catalog)
 - **Feed URL:** `https://parabellum-feed.onrender.com/feed`
 - **Refresh URL:** `https://parabellum-feed.onrender.com/refresh`
+- **Debug URL:** `https://parabellum-feed.onrender.com/debug`
+- **Pixel ativo:** Parabellum t-shirts's pixel (ID: 1025951693198559)
+- **Catálogo Meta:** Parabellum Catalog
+- **Pasta Google Drive:** `1C7isv1A0PwjVNHg3d7EjWhsIJHAaN7UA` (Claud Adjust Catalog)
 
 ---
 
-## Endpoints do servidor
+## Estrutura do projeto
 
-| Endpoint | Descrição |
-|----------|-----------|
-| `GET /feed` | Feed RSS (cache de 1 hora) |
-| `GET /refresh` | Força recarregar o feed do Shopify agora |
-| `GET /` | Status do servidor |
+```
+server.js                    → servidor do feed RSS (deploy no Render)
+upload/
+  meta-catalog-upload.js     → sobe imagens 1:1 do Drive para o Shopify
+  auth.js                    → gera Google OAuth refresh token (rodar 1x)
+  fix-drive-names.js         → diagnóstico de nomes errados no Drive
+  .env.example               → template de variáveis de ambiente
+```
