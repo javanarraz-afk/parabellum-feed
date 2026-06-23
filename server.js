@@ -48,6 +48,11 @@ async function shopifyGQL(query) {
   return r.data.data;
 }
 
+// Extrai ID numérico de "gid://shopify/Product/7891234567890"
+function extractNumericId(gid) {
+  return gid.split('/').pop();
+}
+
 function getMetaCatalogImage(product) {
   const images = product.images?.edges?.map(e => e.node) || [];
   const meta = images.find(img => img.altText === 'meta-catalog');
@@ -73,6 +78,7 @@ async function fetchCatalogProducts() {
       products(first: 50, query: "status:active"${afterClause}) {
         edges {
           node {
+            id
             handle
             title
             description(truncateAt: 500)
@@ -88,7 +94,6 @@ async function fetchCatalogProducts() {
             variants(first: 100) {
               edges {
                 node {
-                  id
                   price
                 }
               }
@@ -110,6 +115,7 @@ async function fetchCatalogProducts() {
       const imageUrl = getMetaCatalogImage(node);
       if (!imageUrl) continue;
 
+      const numericId = extractNumericId(node.id);
       const productUrl = node.onlineStoreUrl ||
         `https://parabellumstore.com.br/products/${node.handle}`;
 
@@ -120,7 +126,8 @@ async function fetchCatalogProducts() {
       }, Number(variants[0]?.price || 0));
 
       products.push({
-        id: node.handle,
+        id: numericId,
+        handle: node.handle,
         imageUrl,
         price: `${minPrice.toFixed(2)} BRL`,
         title: node.title,
@@ -159,20 +166,22 @@ ${rows.join('\n')}
 
 let _cache = null;
 let _cacheAt = 0;
+let _cachedItems = [];
 const CACHE_TTL = 60 * 60 * 1000; // 1 hora
 
-async function getCachedXML() {
-  if (_cache && Date.now() - _cacheAt < CACHE_TTL) return _cache;
+async function getCachedData() {
+  if (_cache && Date.now() - _cacheAt < CACHE_TTL) return { xml: _cache, items: _cachedItems };
   const items = await fetchCatalogProducts();
+  _cachedItems = items;
   _cache = generateXML(items);
   _cacheAt = Date.now();
   console.log(`[${new Date().toISOString()}] Cache atualizado — ${items.length} produtos`);
-  return _cache;
+  return { xml: _cache, items };
 }
 
 app.get('/feed', async (req, res) => {
   try {
-    const xml = await getCachedXML();
+    const { xml } = await getCachedData();
     res.set('Content-Type', 'application/rss+xml; charset=utf-8');
     res.send(xml);
   } catch (err) {
@@ -184,9 +193,58 @@ app.get('/feed', async (req, res) => {
 app.get('/refresh', async (req, res) => {
   try {
     _cache = null;
-    const xml = await getCachedXML();
-    const count = (xml.match(/<item>/g) || []).length;
-    res.json({ ok: true, items: count, updatedAt: new Date().toISOString() });
+    _cachedItems = [];
+    const { items } = await getCachedData();
+    res.json({ ok: true, items: items.length, updatedAt: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Lista todos os produtos no feed com ID numérico e handle
+// Usar para comparar com o content_ids que o pixel está disparando
+app.get('/debug', async (req, res) => {
+  try {
+    const { items } = await getCachedData();
+    res.json({
+      count: items.length,
+      updatedAt: new Date(_cacheAt).toISOString(),
+      note: 'g:id é o ID numérico. Se o pixel disparar outro formato, ajuste aqui.',
+      products: items.map(p => ({
+        feed_id: p.id,
+        handle: p.handle,
+        title: p.title,
+        has_meta_image: true,
+      })),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Lista canais de venda ativos na loja — útil para identificar o ID do canal Facebook
+app.get('/publications', async (req, res) => {
+  try {
+    const data = await shopifyGQL(`{
+      publications(first: 20) {
+        edges {
+          node {
+            id
+            name
+            catalog {
+              id
+              title
+            }
+          }
+        }
+      }
+    }`);
+    const pubs = data.publications.edges.map(e => ({
+      id: e.node.id,
+      name: e.node.name,
+      catalog: e.node.catalog?.title || null,
+    }));
+    res.json({ publications: pubs });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -197,7 +255,7 @@ app.get('/', (req, res) => {
     service: 'parabellum-feed',
     status: 'ok',
     cacheAge: _cache ? Math.round((Date.now() - _cacheAt) / 1000) + 's' : 'cold',
-    endpoints: ['/feed', '/refresh'],
+    endpoints: ['/feed', '/refresh', '/debug', '/publications'],
   });
 });
 
