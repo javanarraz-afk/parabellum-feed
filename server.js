@@ -258,12 +258,32 @@ app.get('/publications', async (req, res) => {
   }
 });
 
+// Endpoint de checkout para o Instagram/Facebook Shop (lojinha Meta)
+// Meta chama: /shop-checkout?products=VARIANT_ID:QUANTITY&coupon=CODE
+// Redireciona para a página do produto → cliente adiciona ao carrinho → Yampi assume
+app.get('/shop-checkout', async (req, res) => {
+  try {
+    const productsParam = req.query.products || '';
+    const variantId = productsParam.split(':')[0].split(',')[0].trim();
+
+    if (variantId) {
+      const { items } = await getCachedData();
+      const item = items.find(i => i.id === variantId);
+      if (item) return res.redirect(302, item.link);
+    }
+
+    res.redirect(302, 'https://parabellumstore.com.br');
+  } catch (err) {
+    res.redirect(302, 'https://parabellumstore.com.br');
+  }
+});
+
 app.get('/', (req, res) => {
   res.json({
     service: 'parabellum-feed',
     status: 'ok',
     cacheAge: _cache ? Math.round((Date.now() - _cacheAt) / 1000) + 's' : 'cold',
-    endpoints: ['/feed', '/refresh', '/debug', '/publications'],
+    endpoints: ['/feed', '/refresh', '/debug', '/publications', '/shop-checkout'],
   });
 });
 
