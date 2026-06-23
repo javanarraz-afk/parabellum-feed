@@ -48,7 +48,6 @@ async function shopifyGQL(query) {
   return r.data.data;
 }
 
-// Extrai ID numérico de "gid://shopify/Product/7891234567890"
 function extractNumericId(gid) {
   return gid.split('/').pop();
 }
@@ -68,7 +67,7 @@ function esc(str) {
 }
 
 async function fetchCatalogProducts() {
-  const products = [];
+  const items = [];
   let cursor = null;
   let hasNextPage = true;
 
@@ -94,7 +93,9 @@ async function fetchCatalogProducts() {
             variants(first: 100) {
               edges {
                 node {
+                  id
                   price
+                  availableForSale
                 }
               }
             }
@@ -115,40 +116,40 @@ async function fetchCatalogProducts() {
       const imageUrl = getMetaCatalogImage(node);
       if (!imageUrl) continue;
 
-      const numericId = extractNumericId(node.id);
+      const productNumericId = extractNumericId(node.id);
       const productUrl = node.onlineStoreUrl ||
         `https://parabellumstore.com.br/products/${node.handle}`;
+      const description = node.description || node.title;
 
-      const variants = node.variants.edges.map(e => e.node);
-      const minPrice = variants.reduce((min, v) => {
-        const p = Number(v.price);
-        return p < min ? p : min;
-      }, Number(variants[0]?.price || 0));
-
-      products.push({
-        id: numericId,
-        handle: node.handle,
-        imageUrl,
-        price: `${minPrice.toFixed(2)} BRL`,
-        title: node.title,
-        description: node.description || node.title,
-        link: productUrl,
-      });
+      for (const { node: variant } of node.variants.edges) {
+        items.push({
+          id: extractNumericId(variant.id),
+          item_group_id: productNumericId,
+          handle: node.handle,
+          title: node.title,
+          description,
+          link: productUrl,
+          imageUrl,
+          price: `${Number(variant.price).toFixed(2)} BRL`,
+          availability: variant.availableForSale ? 'in stock' : 'out of stock',
+        });
+      }
     }
   }
 
-  return products;
+  return items;
 }
 
 function generateXML(items) {
   const rows = items.map(item => `    <item>
       <g:id>${item.id}</g:id>
+      <g:item_group_id>${item.item_group_id}</g:item_group_id>
       <g:title>${esc(item.title)}</g:title>
       <g:description>${esc(item.description)}</g:description>
       <g:link><![CDATA[${item.link}]]></g:link>
       <g:image_link><![CDATA[${item.imageUrl}]]></g:image_link>
       <g:price>${esc(item.price)}</g:price>
-      <g:availability>in stock</g:availability>
+      <g:availability>${item.availability}</g:availability>
       <g:condition>new</g:condition>
       <g:brand>Parabellum Store</g:brand>
     </item>`);
@@ -167,7 +168,7 @@ ${rows.join('\n')}
 let _cache = null;
 let _cacheAt = 0;
 let _cachedItems = [];
-const CACHE_TTL = 60 * 60 * 1000; // 1 hora
+const CACHE_TTL = 60 * 60 * 1000;
 
 async function getCachedData() {
   if (_cache && Date.now() - _cacheAt < CACHE_TTL) return { xml: _cache, items: _cachedItems };
@@ -175,7 +176,7 @@ async function getCachedData() {
   _cachedItems = items;
   _cache = generateXML(items);
   _cacheAt = Date.now();
-  console.log(`[${new Date().toISOString()}] Cache atualizado — ${items.length} produtos`);
+  console.log(`[${new Date().toISOString()}] Cache atualizado — ${items.length} variantes de ${new Set(items.map(i => i.item_group_id)).size} produtos`);
   return { xml: _cache, items };
 }
 
@@ -195,34 +196,41 @@ app.get('/refresh', async (req, res) => {
     _cache = null;
     _cachedItems = [];
     const { items } = await getCachedData();
-    res.json({ ok: true, items: items.length, updatedAt: new Date().toISOString() });
+    const products = new Set(items.map(i => i.item_group_id)).size;
+    res.json({ ok: true, variants: items.length, products, updatedAt: new Date().toISOString() });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Lista todos os produtos no feed com ID numérico e handle
-// Usar para comparar com o content_ids que o pixel está disparando
+// Lista todos os itens do feed agrupados por produto
+// Usar para verificar se os variant IDs casam com o pixel
 app.get('/debug', async (req, res) => {
   try {
     const { items } = await getCachedData();
+    const grouped = {};
+    for (const item of items) {
+      if (!grouped[item.item_group_id]) {
+        grouped[item.item_group_id] = { title: item.title, handle: item.handle, variants: [] };
+      }
+      grouped[item.item_group_id].variants.push({
+        feed_id: item.id,
+        price: item.price,
+        availability: item.availability,
+      });
+    }
     res.json({
-      count: items.length,
+      products: Object.keys(grouped).length,
+      variants: items.length,
       updatedAt: new Date(_cacheAt).toISOString(),
-      note: 'g:id é o ID numérico. Se o pixel disparar outro formato, ajuste aqui.',
-      products: items.map(p => ({
-        feed_id: p.id,
-        handle: p.handle,
-        title: p.title,
-        has_meta_image: true,
-      })),
+      note: 'feed_id deve casar com content_ids do pixel. item_group_id é o ID do produto pai.',
+      catalog: grouped,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Lista canais de venda ativos na loja — útil para identificar o ID do canal Facebook
 app.get('/publications', async (req, res) => {
   try {
     const data = await shopifyGQL(`{
