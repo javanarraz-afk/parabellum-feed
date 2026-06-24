@@ -16,7 +16,7 @@ const SHOPIFY_STORE         = process.env.SHOPIFY_STORE;
 const SHOPIFY_CLIENT_ID     = process.env.SHOPIFY_CLIENT_ID;
 const SHOPIFY_CLIENT_SECRET = process.env.SHOPIFY_CLIENT_SECRET;
 
-const IMAGES_DIR = 'D:/Claude Code/Img Catalogo 1 por 1/Claud Adjust Catalog-20260623T013701Z-3-001/Claud Adjust Catalog';
+const IMAGES_DIR = 'C:/Users/Javan Arraes/Pictures/Catalogo Prop 1-1/Claud Adjust Catalog-20260624T141447Z-3-001/Claud Adjust Catalog';
 const ALT_TAG    = 'meta-catalog';
 
 const args          = process.argv.slice(2);

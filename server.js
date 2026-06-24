@@ -82,7 +82,7 @@ async function fetchCatalogProducts() {
             title
             description(truncateAt: 500)
             onlineStoreUrl
-            images(first: 10) {
+            images(first: 50) {
               edges {
                 node {
                   url
